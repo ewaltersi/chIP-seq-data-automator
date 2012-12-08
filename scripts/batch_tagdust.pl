@@ -1,0 +1,17 @@
+#!/usr/bin/perl
+
+
+use strict; 
+use warnings;
+
+die "usage: batch_tagdust.pl <Path to folder of fastq files> <output folder> <path to adapters files> <fdr>\n" unless @ARGV==4;
+`mkdir $ARGV[1]`;
+my $c =`ls $ARGV[0]*.fastq`;
+
+my @array = split(/\n/, $c);
+
+foreach my $entry (@array){
+	my @file = split(/\//, $entry);
+	print "working on file = $file[1]\n";
+	my $w = `tagdust $ARGV[2] $ARGV[0]$file[1] -f $ARGV[3] -o $ARGV[1]clean.$file[1] -a $ARGV[1]artifact.$file[1]`;
+      }

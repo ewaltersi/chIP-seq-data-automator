@@ -1,0 +1,61 @@
+chmod 700 ./scripts/*
+
+#Runs QC, stores output in /working/QC
+mkdir ./working/QC
+./scripts/fastqc ./sequence_in/* -o ./working/QC/ -t 8 --noextract
+
+#Splits by barcode (found in files_in)
+mkdir ./working/bc_split
+cat ./sequence_in/* | ./scripts/fastx_barcode_splitter.pl --bcfile ./files_in/ChIP_barcodes.txt --bol --mismatch 1 --prefix working/bc_split/ --suffix ".fastq"
+
+#Trims barcode & T overhang (if your barcode is 6 bases)
+./scripts/batch_bc_trimmer.pl ./working/bc_split/ ./working/bc_trim/ 8
+
+#Cleans adapter contamination (found in files_in)
+mkdir ./working/bc_tagdusted
+cd ./working/bc_trim/
+trim_array=( $(find *.fastq) )
+for file in ${trim_array[@]}
+do
+  echo Working on $file
+  echo Going to try to put it in ../bc_tagdusted/clean_$file
+  tagdust ../../files_in/adapters.fasta $file -f 0.05 -o clean_$file -a artifact_$file
+done
+clean_files=( $(find clean_*) )
+artifact_files=( $(find artifact_*) )
+mkdir ../bc_tagdusted/artifacts
+mv ${clean_files[@]} ../bc_tagdusted
+mv ${artifact_files[@]} ../bc_tagdusted/artifacts
+cd ../..
+
+#Trims poor quality base calls off of reads, then cans the read if it's too short
+mkdir ./working/bc_clean_qtrim
+./scripts/qtrimmer.pl ./working/bc_tagdusted/ ./working/bc_clean_qtrim/ 20 25
+
+#Aligns each collection of reads to the genome (in files_in)
+mkdir ./working/bowtie_sam_2maskedgenome
+export BOWTIE_INDEXES=/usr/bin/indexes/
+./scripts/batch_bowtie_sam.pl ./working/bc_clean_qtrim/ ./working/bowtie_sam_2maskedgenome/ Hb_NRC1_masked
+
+#Converts those .sam files to .bam files
+cd ./working/bowtie_sam_2maskedgenome
+../../scripts/batch_sam2bam.pl
+mkdir ../bam_files
+rm *.bai
+bam_files=( $(find *d.bam) )
+mv ${bam_files[@]} ../bam_files
+cd ../..
+
+#Runs pique with defaults on all of those .bams
+bam_files=( $(find ./working/bam_files -name  "*d.bam") )
+bam_names=${bam_files[@]##"./working/bam_files/clean_"}
+bam_names=${bam_names[@]//".fastq.sam.sorted.bam"/}
+WCE_bam=( $(find ./working/bam_files -name \*WCE\*) )
+
+for file in ${bam_names[@]}
+do
+  mkdir ./pique_out/$file
+  cd ./pique_out/$file
+  pique batch -name $file -ip ../../working/bam_files/clean_$file.fastq.sam.sorted.bam -bg ../../$WCE_bam -map ../../files_in/map* -p
+  cd ../..
+done
